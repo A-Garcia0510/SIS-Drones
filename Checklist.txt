@@ -1,0 +1,15 @@
+# Checklist para el Proyecto 1 - Info 1126
+
+- [ ] Gestión de Rutas: Implementar BFS, DFS, Topological Sort
+- [ ] Simulación: Crear simulación con 15-150 nodos y hasta 500 órdenes
+- [ ] Estadísticas: Implementar AVL para rutas más usadas
+- [ ] Dashboard: Crear dashboard en Streamlit con 5 pestañas
+  - [ ] Run Simulation
+  - [ ] Explore Network
+  - [ ] Clients & Orders
+  - [ ] Route Analytics
+  - [ ] General Statistics
+- [ ] Estructura del Proyecto: Organizar en directorios `model`, `sim`, `domain`, `tda`, `visual`
+- [ ] Entrega: Preparar presentación en PPT con los contenidos requeridos
+
+# Nota: Marcar cada paso como completado una vez que se haya realizado. 
