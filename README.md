@@ -113,11 +113,3 @@ http://localhost:8501
 
 ## 📄 Licencia
 Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE.md](LICENSE.md) para más detalles.
-
-## ✨ Autores
-- [Tu Nombre] - *Desarrollo Inicial* - [Tu Usuario de GitHub]
-
-## 🙏 Agradecimientos
-- Profesor de INFO1126 - Programación 3
-- Compañeros de curso por el feedback
-- Comunidad de desarrollo por las librerías utilizadas
