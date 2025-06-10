@@ -67,8 +67,8 @@ class SimulationInitializer:
         Inicializa la red con la distribución correcta de nodos y sus tipos.
         """
         # Validación de entrada
-        if num_nodes < 15 or num_nodes > 150:
-            raise ValueError("El número de nodos debe estar entre 15 y 150")
+        if num_nodes < 10 or num_nodes > 150:
+            raise ValueError("El número de nodos debe estar entre 10 y 150")
             
         # Reiniciar todas las estructuras
         self.graph = Graph()
@@ -125,10 +125,13 @@ class SimulationInitializer:
         all_nodes = self._storage_nodes + self._charging_nodes + self._client_nodes
         edges_added = set()
         
+        # Calcular peso máximo basado en el tamaño de la red
+        max_weight = min(5, max(2, self.DRONE_AUTONOMY // (num_nodes // 10)))
+        
         # Conectar nodos secuencialmente primero (más eficiente que aleatorio)
         for i in range(len(all_nodes)-1):
             u, v = all_nodes[i], all_nodes[i+1]
-            weight = random.randint(1, min(10, self.DRONE_AUTONOMY // 5))
+            weight = random.randint(1, max_weight)
             self.graph.add_edge(u, v, weight)
             edges_added.add((min(u, v), max(u, v)))
 
@@ -140,7 +143,7 @@ class SimulationInitializer:
         if edges_to_add > 0:
             random.shuffle(potential_edges)
             for u, v in potential_edges[:edges_to_add]:
-                weight = random.randint(1, min(10, self.DRONE_AUTONOMY // 5))
+                weight = random.randint(1, max_weight)
                 self.graph.add_edge(u, v, weight)
 
         # Verificar conectividad final
@@ -170,83 +173,104 @@ class SimulationInitializer:
     def find_path_with_charging(self, start, end):
         """
         Encuentra una ruta entre dos nodos considerando la autonomía del dron y estaciones de carga.
-        Utiliza una versión modificada de BFS que tiene en cuenta la batería y optimiza el uso de estaciones.
-        
-        Args:
-            start (str): Nodo de inicio
-            end (str): Nodo de destino
-            
+        Si no hay ruta completa, devuelve el camino parcial más largo posible y la batería restante.
         Returns:
-            list: Lista de nodos que forman la ruta, o None si no hay ruta viable
+            dict: {
+                'path': [...],
+                'completed': bool,
+                'battery_left': int,
+                'reason': str,
+                'partial_path': [...],
+                'partial_battery_left': int,
+                'full_path': [...],
+                'full_battery_left': int
+            }
         """
         if not (start in self.graph.vertices() and end in self.graph.vertices()):
-            return None
+            return {'path': [], 'completed': False, 'battery_left': None, 'reason': 'Nodos no válidos', 'partial_path': [], 'partial_battery_left': None, 'full_path': [], 'full_battery_left': None}
 
-        # Clave de cache única para este par de nodos
         cache_key = f"{start}-{end}"
         if cache_key in self.path_cache:
             return self.path_cache[cache_key]
 
-        # Cola para BFS: (nodo, camino, batería_restante, num_recargas)
         queue = deque([(start, [start], self.DRONE_AUTONOMY, 0)])
         visited = set()  # (nodo, batería_restante)
         best_path = None
         min_recharges = float('inf')
-        
+        longest_partial = ([], self.DRONE_AUTONOMY, 0)
+
         while queue:
             current, path, battery, num_recharges = queue.popleft()
-            
+
             # Si llegamos al destino, actualizamos el mejor camino si tiene menos recargas
             if current == end:
                 if num_recharges < min_recharges:
-                    best_path = path
+                    best_path = (path, battery, num_recharges)
                     min_recharges = num_recharges
                 continue
-            
+
             # Si ya encontramos un camino y este tiene más recargas, lo ignoramos
             if num_recharges >= min_recharges:
                 continue
-            
-            # Exploramos vecinos
+
+            # Guardar el camino parcial más largo
+            if len(path) > len(longest_partial[0]):
+                longest_partial = (path, battery, num_recharges)
+
             neighbors = self.graph.get_neighbors(current)
-            # Priorizamos estaciones de carga si la batería está baja
             if battery < self.DRONE_AUTONOMY * 0.3:
                 neighbors = sorted(neighbors, key=lambda x: x.startswith('C'), reverse=True)
-            
+
             for neighbor in neighbors:
                 edge = self.graph.get_edge(current, neighbor)
                 if edge:
                     edge_cost = edge.element()
-                    
-                    # Calculamos la batería después de movernos
                     new_battery = battery
                     new_recharges = num_recharges
-                    
-                    # Si el nodo actual o el siguiente es de carga, recargamos al máximo
                     if current.startswith('C') or neighbor.startswith('C'):
                         new_battery = self.DRONE_AUTONOMY
-                        if not current.startswith('C'):  # Solo contamos recarga si el siguiente es estación
+                        if not current.startswith('C'):
                             new_recharges += 1
                     else:
                         new_battery -= edge_cost
-                    
-                    # Si tenemos suficiente batería y no hemos visitado esta combinación
                     state = (neighbor, new_battery)
                     if new_battery >= 0 and state not in visited:
                         visited.add(state)
                         new_path = path + [neighbor]
                         queue.append((neighbor, new_path, new_battery, new_recharges))
-        
-        # Guardamos en cache y retornamos el mejor camino encontrado
+
         if best_path:
-            self.path_cache[cache_key] = best_path
-        return best_path
+            result = {
+                'path': best_path[0],
+                'completed': True,
+                'battery_left': best_path[1],
+                'reason': '',
+                'partial_path': best_path[0],
+                'partial_battery_left': best_path[1],
+                'full_path': best_path[0],
+                'full_battery_left': best_path[1]
+            }
+            self.path_cache[cache_key] = result
+            return result
+        else:
+            # Devolver el camino parcial más largo
+            result = {
+                'path': longest_partial[0],
+                'completed': False,
+                'battery_left': longest_partial[1],
+                'reason': 'No se pudo completar la ruta con la autonomía disponible',
+                'partial_path': longest_partial[0],
+                'partial_battery_left': longest_partial[1],
+                'full_path': [],
+                'full_battery_left': None
+            }
+            self.path_cache[cache_key] = result
+            return result
 
     def generate_orders(self, num_orders):
         """
         Genera órdenes aleatorias entre nodos de manera optimizada.
-        La suma total de frecuencias de rutas será igual al número total de órdenes,
-        ya que cada orden usa exactamente una ruta.
+        Ahora prioriza la reutilización de rutas frecuentes si existen entre el origen y destino.
         """
         if not self.graph or not self.graph.vertices():
             raise ValueError("El grafo no está inicializado")
@@ -264,26 +288,37 @@ class SimulationInitializer:
                 origin = random.choice(self._storage_nodes)
                 destination = random.choice(self._client_nodes)
                 
-                # Encontrar una ruta viable
-                path = self.find_path_with_charging(origin, destination)
-                if not path:
-                    continue
+                # Buscar si ya existe una ruta frecuente entre este origen y destino
+                ruta_existente = None
+                for route in self.routes:
+                    if route.nodes[0] == origin and route.nodes[-1] == destination:
+                        ruta_existente = route
+                        break
                 
-                # Convertir el path a string para usar como key
-                route_key = ' → '.join(path)
+                if ruta_existente:
+                    path = ruta_existente.nodes
+                    route_key = ' → '.join(path)
+                    ruta_existente.increment_frequency()
+                    route = ruta_existente
+                    completed = True
+                else:
+                    # Encontrar una ruta viable nueva
+                    result = self.find_path_with_charging(origin, destination)
+                    path = result['path']
+                    completed = result['completed']
+                    if not path or not completed:
+                        continue
+                    route_key = ' → '.join(path)
+                    route = Route(f"Route_{len(self.routes)+1}", path)
+                    self.routes.append(route)
                 
-                # Crear o actualizar la ruta
+                # Actualizar frecuencia de la ruta
                 if route_key in self.route_frequencies:
-                    # Reutilizar ruta existente
-                    route = next(r for r in self.routes if ' → '.join(r.nodes) == route_key)
                     self.route_frequencies[route_key] += 1
                     route.frequency = self.route_frequencies[route_key]
                 else:
-                    # Crear nueva ruta
-                    route = Route(f"Route_{len(self.routes)+1}", path)
                     self.route_frequencies[route_key] = 1
                     route.frequency = 1
-                    self.routes.append(route)
                 
                 # Calcular el costo total
                 total_cost = sum(self.graph.get_edge(path[j], path[j+1]).element() 

@@ -128,8 +128,10 @@ def run_simulation_tab():
     with col1:
         num_nodes = st.slider('Número de Nodos', 10, 150, 15, help="Elegir entre 10 y 150 nodos")
         num_edges = st.slider('Número de Aristas', 10, 300, 20, help="Elegir entre 10 y 300 aristas")
-        num_orders = st.slider('Número de Órdenes', 1, 500, 14, help="Elegir entre 1 y 500 órdenes")
+        num_orders = st.slider('Número de Órdenes', 10, 500, 14, help="Elegir entre 10 y 500 órdenes")
         st.markdown(f"Nodos Cliente Derivados: {int(num_nodes * 0.6)} ({int(0.6 * 100)}% de {num_nodes})")
+        if num_nodes < 15:
+            st.warning('⚠️ La simulación puede no ser funcional con menos de 15 nodos debido a restricciones de conectividad y roles. Se recomienda usar al menos 15 nodos.')
     
     with col2:
         if st.button('🚀 Iniciar Simulación', use_container_width=True):
@@ -221,12 +223,20 @@ def explore_network_tab():
     with col2:
         if st.button('✈️ Calcular Ruta', use_container_width=True):
             st.session_state.network_adapter.clear_path()
-            path = st.session_state.simulation_initializer.find_path_with_charging(start_node, end_node)
+            result = st.session_state.simulation_initializer.find_path_with_charging(start_node, end_node)
+            path = result['path']
+            completed = result['completed']
+            battery_left = result['battery_left']
+            reason = result['reason']
+            partial_path = result.get('partial_path', [])
+            partial_battery_left = result.get('partial_battery_left', None)
+            full_path = result.get('full_path', [])
+            full_battery_left = result.get('full_battery_left', None)
             
             if path:
                 total_cost = 0
                 current_autonomy = st.session_state.simulation_initializer.DRONE_AUTONOMY
-                valid_path = True
+                valid_path = completed
                 segments = []
                 charging_points = []
                 
@@ -240,43 +250,41 @@ def explore_network_tab():
                                 charging_points.append(charging_node)
                             current_autonomy = st.session_state.simulation_initializer.DRONE_AUTONOMY
                             segments.append(f"🔋 Recargando en {charging_node} (Energía restaurada a {current_autonomy})")
-                        
                         current_autonomy -= edge_cost
                         segments.append(f"{path[i]} → {path[i+1]} (Costo: {edge_cost}, Energía: {current_autonomy})")
-                        
-                        if current_autonomy < 0:
-                            valid_path = False
-                            st.error("❌ No se encontró una ruta viable con la autonomía disponible")
-                            st.write("Análisis de ruta:")
-                            for segment in segments:
-                                st.write(segment)
-                            return
-                            
                         total_cost += edge_cost
                     else:
                         valid_path = False
                         st.error(f"❌ No hay conexión directa entre {path[i]} y {path[i+1]}")
-                        return
+                        break
 
-                if valid_path:
-                    st.session_state.network_adapter.highlight_path(path)
-                    st.session_state.current_path = path
-                    st.session_state.current_cost = total_cost
-                    st.session_state.path_calculated = True
-                    
-                    with st.expander("📍 Detalles de la Ruta", expanded=True):
+                st.session_state.network_adapter.highlight_path(path)
+                st.session_state.current_path = path
+                st.session_state.current_cost = total_cost
+                st.session_state.path_calculated = completed
+                
+                with st.expander("📍 Detalles de la Ruta", expanded=True):
+                    if completed:
                         st.success(f"✅ Ruta encontrada: {' → '.join(path)}")
                         st.info(f"💰 Costo total: {total_cost} unidades")
-                        
                         if charging_points:
                             st.warning(f"🔋 La ruta requiere {len(charging_points)} paradas de carga: {', '.join(charging_points)}")
-                        
                         st.write("Análisis detallado de la ruta:")
                         for segment in segments:
                             st.write(segment)
+                    else:
+                        st.error(f"❌ No se pudo completar la ruta: {reason}")
+                        st.info(f"🔴 Camino parcial recorrido: {' → '.join(partial_path)}")
+                        st.info(f"💰 Costo acumulado: {total_cost} unidades | Energía restante: {partial_battery_left}")
+                        st.write("Análisis detallado del intento de ruta:")
+                        for segment in segments:
+                            st.write(segment)
+                        if full_path:
+                            st.markdown("---")
+                            st.success(f"✅ Ruta completa posible: {' → '.join(full_path)}")
+                            st.info(f"💰 Costo total: {total_cost} unidades | Energía restante: {full_battery_left}")
             else:
-                st.error("❌ No se encontró una ruta viable con la autonomía disponible")
-                st.info("💡 El sistema intentará automáticamente rutas a través de estaciones de carga")
+                st.error(f"❌ No se encontró ninguna ruta posible: {reason}")
                 st.session_state.path_calculated = False
 
     if st.session_state.path_calculated:
@@ -492,62 +500,63 @@ def general_statistics_tab():
     # Crear tres columnas para los gráficos
     col1, col2, col3 = st.columns(3)
 
+    # Función auxiliar para crear gráficos de barras
+    def create_bar_chart(data, title, color):
+        if data:
+            df = pd.DataFrame({
+                'Node': [node for node, _ in data],
+                'Visits': [visits for _, visits in data]
+            })
+            fig = plt.figure(figsize=(8, 5))
+            plt.bar(df['Node'], df['Visits'], color=color)
+            plt.xticks(rotation=45)
+            plt.title(title)
+            plt.tight_layout()
+            return fig
+        return None
+
+    # Agregar visitas de todas las rutas por tipo de nodo
+    def aggregate_visits_by_type(node_type_prefix):
+        visits = {}
+        for route in getattr(st.session_state, 'routes', []):
+            for node, count in route.get_node_visits().items():
+                if node.startswith(node_type_prefix):
+                    visits[node] = visits.get(node, 0) + count
+        # Ordenar por visitas descendente
+        return sorted(visits.items(), key=lambda x: x[1], reverse=True)
+
     with col1:
         st.markdown("👥 Clientes Más Visitados")
-        client_visits = {node: st.session_state.node_visits.get(node, 0) 
-                        for node in nodes 
-                        if node.startswith('T')}
+        client_visits = aggregate_visits_by_type('T')
         if client_visits:
-            df_clients = pd.DataFrame({
-                'Node': list(client_visits.keys()),
-                'Visits': list(client_visits.values())
-            }).sort_values('Visits', ascending=False)
-            
-            fig = plt.figure(figsize=(8, 5))
-            plt.bar(df_clients['Node'], df_clients['Visits'], color='#66B2FF')
-            plt.xticks(rotation=45)
-            plt.title('Visitas a Nodos Cliente')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
+            fig = create_bar_chart(client_visits[:5], 'Top 5 Clientes Más Visitados', '#66B2FF')
+            if fig:
+                st.pyplot(fig)
+                plt.close()
+        else:
+            st.info('No hay visitas registradas a clientes.')
 
     with col2:
         st.markdown("🔋 Estaciones de Recarga Más Visitadas")
-        charging_visits = {node: st.session_state.node_visits.get(node, 0) 
-                         for node in nodes 
-                         if node.startswith('C')}
+        charging_visits = aggregate_visits_by_type('C')
         if charging_visits:
-            df_charging = pd.DataFrame({
-                'Node': list(charging_visits.keys()),
-                'Visits': list(charging_visits.values())
-            }).sort_values('Visits', ascending=False)
-            
-            fig = plt.figure(figsize=(8, 5))
-            plt.bar(df_charging['Node'], df_charging['Visits'], color='#66B2FF')
-            plt.xticks(rotation=45)
-            plt.title('Visitas a Estaciones de Recarga')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
+            fig = create_bar_chart(charging_visits[:5], 'Top 5 Estaciones de Recarga Más Visitadas', '#66B2FF')
+            if fig:
+                st.pyplot(fig)
+                plt.close()
+        else:
+            st.info('No hay visitas registradas a estaciones de recarga.')
 
     with col3:
         st.markdown("📦 Almacenes Más Visitados")
-        storage_visits = {node: st.session_state.node_visits.get(node, 0) 
-                        for node in nodes 
-                        if node.startswith('S')}
+        storage_visits = aggregate_visits_by_type('S')
         if storage_visits:
-            df_storage = pd.DataFrame({
-                'Node': list(storage_visits.keys()),
-                'Visits': list(storage_visits.values())
-            }).sort_values('Visits', ascending=False)
-            
-            fig = plt.figure(figsize=(8, 5))
-            plt.bar(df_storage['Node'], df_storage['Visits'], color='#66B2FF')
-            plt.xticks(rotation=45)
-            plt.title('Visitas a Nodos de Almacenamiento')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
+            fig = create_bar_chart(storage_visits[:5], 'Top 5 Almacenes Más Visitados', '#66B2FF')
+            if fig:
+                st.pyplot(fig)
+                plt.close()
+        else:
+            st.info('No hay visitas registradas a almacenes.')
 
     # Distribución de roles de nodos
     st.subheader('🔄 Gráfico de Torta: Distribución de Roles de Nodos')

@@ -15,6 +15,13 @@ class Route:
         self.total_cost = total_cost
         self.charging_points = charging_points if charging_points else []
         self._hash = hash(tuple(nodes))
+        self.node_visits = {}  # Diccionario para registrar visitas a nodos
+        self._initialize_node_visits()
+
+    def _initialize_node_visits(self):
+        """Inicializa el contador de visitas para cada nodo en la ruta."""
+        for node in self.nodes:
+            self.node_visits[node] = self.node_visits.get(node, 0) + 1
 
     def calculate_total_cost(self, graph):
         """
@@ -104,9 +111,11 @@ class Route:
 
     def increment_frequency(self):
         """
-        Incrementa la frecuencia de uso de la ruta.
+        Incrementa la frecuencia de uso de la ruta y actualiza las visitas a nodos.
         """
         self.frequency += 1
+        for node in self.nodes:
+            self.node_visits[node] = self.node_visits.get(node, 0) + 1
 
     def get_frequency(self):
         """
@@ -116,6 +125,32 @@ class Route:
             int: Frecuencia de uso
         """
         return self.frequency
+
+    def get_node_visits(self):
+        """
+        Obtiene el diccionario de visitas a nodos.
+        
+        Returns:
+            dict: Diccionario con nodos y sus visitas
+        """
+        return self.node_visits
+
+    def get_most_visited_nodes(self, node_type=None):
+        """
+        Obtiene los nodos más visitados, opcionalmente filtrados por tipo.
+        
+        Args:
+            node_type: Tipo de nodo a filtrar ('storage', 'charging', 'client')
+            
+        Returns:
+            list: Lista de tuplas (nodo, visitas) ordenadas por visitas
+        """
+        filtered_visits = self.node_visits
+        if node_type:
+            filtered_visits = {node: visits for node, visits in self.node_visits.items() 
+                             if node.startswith(node_type[0].upper())}
+        
+        return sorted(filtered_visits.items(), key=lambda x: x[1], reverse=True)
 
     def is_viable(self, drone_autonomy):
         """
